@@ -117,6 +117,9 @@ def _rust_doc_test_impl(ctx):
         crate_info = crate_info,
         rustdoc_flags = rustdoc_flags,
         is_test = True,
+        # The arguments are written to a script file that is used to run the
+        # tests and the args point to a param file outside of the `runfiles`.
+        use_param_file_for_rustc_args = False,
     )
 
     tools = action.tools + [ctx.executable._process_wrapper]

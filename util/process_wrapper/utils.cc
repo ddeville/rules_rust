@@ -41,16 +41,17 @@ std::string ToUtf8(const System::StrType& string) {
 #endif  // defined(PW_WIN_UNICODE)
 }
 
-void ReplaceToken(System::StrType& str, const System::StrType& token,
-                  const System::StrType& replacement) {
-  std::size_t pos = str.find(token);
-  if (pos != std::string::npos) {
-    str.replace(pos, token.size(), replacement);
+void ReplaceTokens(System::StrType& str, const std::vector<Subst>& substs) {
+  for (const Subst& subst : substs) {
+    std::size_t pos = str.find(subst.first);
+    if (pos != std::string::npos) {
+      str.replace(pos, subst.first.size(), subst.second);
+    }
   }
 }
 
-bool ReadFileToArray(const System::StrType& file_path,
-                     System::StrVecType& vec) {
+bool ReadFileToVec(const System::StrType& file_path,
+                   System::StrVecType& vec) {
   std::ifstream file(file_path);
   if (file.fail()) {
     std::cerr << "process wrapper error: failed to open file: "
@@ -101,12 +102,25 @@ bool ReadFileToArray(const System::StrType& file_path,
   return true;
 }
 
+bool WriteVecToFile(const System::StrType& file_path, const System::StrVecType& vec) {
+  std::ofstream file(file_path, std::ofstream::out | std::ofstream::trunc);
+  if (file.fail()) {
+    std::cerr << "process wrapper error: failed to open file: "
+              << ToUtf8(file_path) << '\n';
+    return false;
+  }
+  for (const System::StrType& line : vec) {
+    file << ToUtf8(line) << std::endl;
+  }
+  return true;
+}
+
 bool ReadStampStatusToArray(
     const System::StrType& stamp_path,
     std::vector<std::pair<System::StrType, System::StrType>>& vec) {
   // Read each line of the stamp file and split on the first space
   System::StrVecType stamp_block;
-  if (!ReadFileToArray(stamp_path, stamp_block)) {
+  if (!ReadFileToVec(stamp_path, stamp_block)) {
     return false;
   }
 
@@ -118,7 +132,8 @@ bool ReadStampStatusToArray(
                 << ToUtf8(stamp_block[i]) << "\".\n";
       return false;
     }
-    System::StrType key = stamp_block[i].substr(0, space_pos);
+    System::StrType key =
+        PW_SYS_STR("{") + stamp_block[i].substr(0, space_pos) + PW_SYS_STR("}");
     System::StrType value =
         stamp_block[i].substr(space_pos + 1, stamp_block[i].size());
     vec.push_back({std::move(key), std::move(value)});

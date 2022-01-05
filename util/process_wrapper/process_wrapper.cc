@@ -21,14 +21,41 @@
 #include "util/process_wrapper/system.h"
 #include "util/process_wrapper/utils.h"
 
-using CharType = process_wrapper::System::StrType::value_type;
+using namespace process_wrapper;
+using CharType = System::StrType::value_type;
+
+static int process_param_file(System::StrType& path,
+                              System::Arguments& collected_args,
+                              const std::vector<Subst>& subst_mappings) {
+  System::StrVecType args;
+  if (!ReadFileToVec(path, args)) {
+    std::cerr << "Cannot read param file " << ToUtf8(path) << "\n";
+    return -1;
+  }
+  for (System::StrType& arg : args) {
+    // Expand tokens into each argument (since some paths might embed `${pwd}`
+    // that we need to resolve from the subsitution mappings).
+    ReplaceTokens(arg, subst_mappings);
+
+    // If this is a param file, expand it into the top-level arguments by
+    // recursing into its content.
+    if (arg.size() > 0 && arg.substr(0, 1) == PW_SYS_STR("@")) {
+      System::StrType path = arg.substr(1);
+      int res = process_param_file(path, collected_args, subst_mappings);
+      if (res != 0) {
+        return res;
+      }
+    } else {
+      collected_args.push_back(arg);
+    }
+  }
+  return 0;
+}
 
 // Simple process wrapper allowing us to not depend on the shell to run a
 // process to perform basic operations like capturing the output or having
 // the $pwd used in command line arguments or environment variables
 int PW_MAIN(int argc, const CharType* argv[], const CharType* envp[]) {
-  using namespace process_wrapper;
-
   System::EnvironmentBlock environment_block;
   // Taking all environment variables from the current process
   // and sending them down to the child process
@@ -37,8 +64,6 @@ int PW_MAIN(int argc, const CharType* argv[], const CharType* envp[]) {
   }
 
   System::EnvironmentBlock environment_file_block;
-
-  using Subst = std::pair<System::StrType, System::StrType>;
 
   System::StrType exec_path;
   std::vector<Subst> subst_mappings;
@@ -53,7 +78,7 @@ int PW_MAIN(int argc, const CharType* argv[], const CharType* envp[]) {
   System::Arguments file_arguments;
 
   // Processing current process argument list until -- is encountered
-  // everthing after gets sent down to the child process
+  // everything after gets sent down to the child process
   for (int i = 1; i < argc; ++i) {
     System::StrType arg = argv[i];
     if (++i == argc) {
@@ -79,7 +104,8 @@ int PW_MAIN(int argc, const CharType* argv[], const CharType* envp[]) {
       if (value == PW_SYS_STR("${pwd}")) {
         value = System::GetWorkingDirectory();
       }
-      subst_mappings.push_back({std::move(key), std::move(value)});
+      subst_mappings.push_back({PW_SYS_STR("${") + key + PW_SYS_STR("}"),
+                                std::move(value)});
     } else if (arg == PW_SYS_STR("--volatile-status-file")) {
       if (!volatile_status_file.empty()) {
         std::cerr << "process wrapper error: \"--volatile-status-file\" can "
@@ -90,11 +116,11 @@ int PW_MAIN(int argc, const CharType* argv[], const CharType* envp[]) {
         return -1;
       }
     } else if (arg == PW_SYS_STR("--env-file")) {
-      if (!ReadFileToArray(argv[i], environment_file_block)) {
+      if (!ReadFileToVec(argv[i], environment_file_block)) {
         return -1;
       }
     } else if (arg == PW_SYS_STR("--arg-file")) {
-      if (!ReadFileToArray(argv[i], file_arguments)) {
+      if (!ReadFileToVec(argv[i], file_arguments)) {
         return -1;
       }
     } else if (arg == PW_SYS_STR("--touch-file")) {
@@ -143,7 +169,7 @@ int PW_MAIN(int argc, const CharType* argv[], const CharType* envp[]) {
       for (++i; i < argc; ++i) {
         arguments.push_back(argv[i]);
       }
-      // after we consume all arguments we append the files arguments
+      // After we have consumed all arguments add the files arguments the them.
       for (const System::StrType& file_arg : file_arguments) {
         arguments.push_back(file_arg);
       }
@@ -154,13 +180,39 @@ int PW_MAIN(int argc, const CharType* argv[], const CharType* envp[]) {
     }
   }
 
+  // Go through the arguments and make sure that we process param files so that
+  // we can flatten potential recursive param files within them.
+  for (System::StrType& arg : arguments) {
+    if (arg.size() > 0 && arg.substr(0, 1) == PW_SYS_STR("@")) {
+      // This is a param file, process it separately.
+      System::StrType path = arg.substr(1);
+      System::Arguments processed_args;
+      if (process_param_file(path, processed_args, subst_mappings) != 0) {
+        std::cerr << "Failure to process arguments list\n";
+        return -1;
+      }
+
+      // Create a new param file so that we don't need to edit the original one
+      // that Bazel created.
+      System::StrType new_path = path + PW_SYS_STR(".expanded");
+      if (!WriteVecToFile(new_path, processed_args)) {
+        std::cerr << "Cannot write params to file " << ToUtf8(new_path) << "\n";
+        return -1;
+      }
+
+      // Replace the params file arg with the new one.
+      arg = PW_SYS_STR("@") + new_path;
+    } else {
+      // Expand tokens into each argument (since some paths might embed `${pwd}`
+      // that we need to resolve from the subsitution mappings).
+      ReplaceTokens(arg, subst_mappings);
+    }
+  }
+
   // Stamp any format string in an environment variable block
-  for (const Subst& stamp : stamp_mappings) {
-    System::StrType token = PW_SYS_STR("{");
-    token += stamp.first;
-    token.push_back('}');
+  if (stamp_mappings.size()) {
     for (System::StrType& env : environment_file_block) {
-      ReplaceToken(env, token, stamp.second);
+      ReplaceTokens(env, stamp_mappings);
     }
   }
 
@@ -171,19 +223,9 @@ int PW_MAIN(int argc, const CharType* argv[], const CharType* envp[]) {
                            environment_file_block.begin(),
                            environment_file_block.end());
 
-  if (subst_mappings.size()) {
-    for (const Subst& subst : subst_mappings) {
-      System::StrType token = PW_SYS_STR("${");
-      token += subst.first;
-      token.push_back('}');
-      for (System::StrType& arg : arguments) {
-        ReplaceToken(arg, token, subst.second);
-      }
-
-      for (System::StrType& env : environment_block) {
-        ReplaceToken(env, token, subst.second);
-      }
-    }
+  // Expand tokens in environment
+  for (System::StrType& env : environment_block) {
+    ReplaceTokens(env, subst_mappings);
   }
 
   // Have the last values added take precedence over the first.

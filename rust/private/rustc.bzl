@@ -474,7 +474,8 @@ def construct_arguments(
         force_all_deps_direct = False,
         force_link = False,
         stamp = False,
-        remap_path_prefix = "."):
+        remap_path_prefix = ".",
+        use_param_file_for_rustc_args = True):
     """Builds an Args object containing common rustc flags
 
     Args:
@@ -500,6 +501,7 @@ def construct_arguments(
         stamp (bool, optional): Whether or not workspace status stamping is enabled. For more details see
             https://docs.bazel.build/versions/main/user-manual.html#flag--stamp
         remap_path_prefix (str, optional): A value used to remap `${pwd}` to. If set to a falsey value, no prefix will be set.
+        use_param_file_for_rustc_args(bool, optional): Whether Bazel should use a param file to pass the arguments to rustc.
 
     Returns:
         tuple: A tuple of the following items
@@ -574,8 +576,11 @@ def construct_arguments(
 
     # Rustc arguments
     rustc_flags = ctx.actions.args()
-    rustc_flags.set_param_file_format("multiline")
-    rustc_flags.use_param_file("@%s", use_always = False)
+
+    if use_param_file_for_rustc_args:
+        rustc_flags.set_param_file_format("multiline")
+        rustc_flags.use_param_file("@%s", use_always = True)
+
     rustc_flags.add(crate_info.root)
     rustc_flags.add("--crate-name=" + crate_info.name)
     rustc_flags.add("--crate-type=" + crate_info.type)

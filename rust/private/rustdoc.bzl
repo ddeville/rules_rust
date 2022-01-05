@@ -49,7 +49,8 @@ def rustdoc_compile_action(
         crate_info,
         output = None,
         rustdoc_flags = [],
-        is_test = False):
+        is_test = False,
+        use_param_file_for_rustc_args = True):
     """Create a struct of information needed for a `rustdoc` compile action based on crate passed to the rustdoc rule.
 
     Args:
@@ -59,6 +60,7 @@ def rustdoc_compile_action(
         output (File, optional): An optional output a `rustdoc` action is intended to produce.
         rustdoc_flags (list, optional): A list of `rustdoc` specific flags.
         is_test (bool, optional): If True, the action will be configured for `rust_doc_test` targets
+        use_param_file_for_rustc_args(bool, optional): Whether Bazel should use a param file to pass the arguments to rustc.
 
     Returns:
         struct: A struct of some `ctx.actions.run` arguments.
@@ -118,6 +120,7 @@ def rustdoc_compile_action(
         emit = [],
         remap_path_prefix = None,
         force_link = True,
+        use_param_file_for_rustc_args = use_param_file_for_rustc_args,
     )
 
     return struct(

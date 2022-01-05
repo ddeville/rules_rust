@@ -21,16 +21,20 @@
 
 namespace process_wrapper {
 
+using Subst = std::pair<System::StrType, System::StrType>;
+
 // Converts to and frin the system string format
 System::StrType FromUtf8(const std::string& string);
 std::string ToUtf8(const System::StrType& string);
 
-// Replaces a token in str by replacement
-void ReplaceToken(System::StrType& str, const System::StrType& token,
-                  const System::StrType& replacement);
+// Replaces tokens in str by replacement
+void ReplaceTokens(System::StrType& str, const std::vector<Subst>& substs);
 
 // Reads a file in text mode and feeds each line to item in the vec output
-bool ReadFileToArray(const System::StrType& file_path, System::StrVecType& vec);
+bool ReadFileToVec(const System::StrType& file_path, System::StrVecType& vec);
+
+// Write the content of an array file as lines in a file
+bool WriteVecToFile(const System::StrType& file_path, const System::StrVecType& vec);
 
 // Reads a workspace status stamp file to an array of key value pairs
 bool ReadStampStatusToArray(
