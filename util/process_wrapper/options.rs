@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::fmt;
+use std::path::PathBuf;
 use std::process::exit;
 
 use crate::flags::{FlagParseError, Flags, ParseOutcome};
@@ -34,6 +35,8 @@ pub(crate) struct Options {
     pub(crate) touch_file: Option<String>,
     // If set to (source, dest) copies the source file to dest.
     pub(crate) copy_output: Option<(String, String)>,
+    // If set, a list of files that should be symlinked into a directory.
+    pub(crate) symlink_info: Option<(Vec<PathBuf>, PathBuf)>,
     // If set, redirects the child process stdout to this file.
     pub(crate) stdout_file: Option<String>,
     // If set, redirects the child process stderr to this file.
@@ -49,6 +52,8 @@ pub(crate) fn options() -> Result<Options, OptionError> {
     let mut arg_file_raw = None;
     let mut touch_file = None;
     let mut copy_output_raw = None;
+    let mut symlink_dir = None;
+    let mut symlink_files = None;
     let mut stdout_file = None;
     let mut stderr_file = None;
     let mut flags = Flags::new();
@@ -70,6 +75,16 @@ pub(crate) fn options() -> Result<Options, OptionError> {
         &mut touch_file,
     );
     flags.define_repeated_flag("--copy-output", "", &mut copy_output_raw);
+    flags.define_flag(
+        "--symlink-dir",
+        "Symlink files into this directory",
+        &mut symlink_dir,
+    );
+    flags.define_repeated_flag(
+        "--symlink-file",
+        "Files to symlink into the target directory",
+        &mut symlink_files,
+    );
     flags.define_flag(
         "--stdout-file",
         "Redirect subprocess stdout in this file.",
@@ -138,6 +153,15 @@ pub(crate) fn options() -> Result<Options, OptionError> {
         })
         .transpose()?;
 
+    // Process symlink info
+    let mut symlink_info = None;
+    if let Some(files) = symlink_files {
+        let dir = symlink_dir.ok_or_else(|| {
+            OptionError::Generic("A directory has to be specified to symlink files".to_owned())
+        })?;
+        symlink_info = Some((files.iter().map(PathBuf::from).collect(), dir.into()));
+    }
+
     // Prepare the environment variables, unifying those read from files with the ones
     // of the current process.
     let vars = environment_block(environment_file_block, &stamp_mappings, &subst_mappings);
@@ -157,6 +181,7 @@ pub(crate) fn options() -> Result<Options, OptionError> {
         child_environment: vars,
         touch_file,
         copy_output,
+        symlink_info,
         stdout_file,
         stderr_file,
     })

@@ -16,7 +16,11 @@ mod flags;
 mod options;
 mod util;
 
-use std::fs::{copy, OpenOptions};
+use std::fs::{self, copy, OpenOptions};
+#[cfg(not(target_os = "windows"))]
+use std::os::unix::fs::symlink as symlink_file;
+#[cfg(target_os = "windows")]
+use std::os::windows::fs::symlink_file;
 use std::process::{exit, Command, Stdio};
 
 use crate::options::options;
@@ -26,6 +30,16 @@ fn main() {
         Err(err) => panic!("process wrapper error: {}", err),
         Ok(v) => v,
     };
+    if let Some(symlink_info) = opts.symlink_info {
+        let folder = &symlink_info.1;
+        fs::create_dir(folder).expect("cannot create dir");
+        println!("DIR {:?}", folder);
+        for file in &symlink_info.0 {
+            println!("FILE {:?}", file);
+            symlink_file(file, folder.join(file.file_name().expect("not a file")))
+                .expect("cannot symlink");
+        }
+    }
     let stdout = if let Some(stdout_file) = opts.stdout_file {
         OpenOptions::new()
             .create(true)

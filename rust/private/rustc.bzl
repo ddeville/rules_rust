@@ -764,7 +764,7 @@ def construct_arguments(
         _add_native_link_flags(rustc_flags, dep_info, linkstamp_outs, ambiguous_libs, crate_info.type, toolchain, cc_toolchain, feature_configuration)
 
     # These always need to be added, even if not linking this crate.
-    add_crate_link_flags(rustc_flags, dep_info, force_all_deps_direct)
+    add_crate_link_flags(process_wrapper_flags, rustc_flags, crate_info, dep_info, toolchain, force_all_deps_direct)
 
     needs_extern_proc_macro_flag = "proc-macro" in [crate_info.type, crate_info.wrapped_crate_type] and \
                                    crate_info.edition != "2015"
@@ -1180,18 +1180,21 @@ def _get_dir_names(files):
         dirs[f.dirname] = None
     return dirs.keys()
 
-def add_crate_link_flags(args, dep_info, force_all_deps_direct = False):
+def add_crate_link_flags(args, rustc_args, crate_info, dep_info, toolchain, force_all_deps_direct = False):
     """Adds link flags to an Args object reference
 
     Args:
-        args (Args): An arguments object reference
+        args (Args): An arguments object reference to pass to the process wrapper
+        rustc_args (Args): An arguments object reference to pass to rustc
+        crate_info (CrateInfo): he CrateInfo provider of the target crate
         dep_info (DepInfo): The current target's dependency info
+        toolchain (rust_toolchain): The current `rust_toolchain`
         force_all_deps_direct (bool, optional): Whether to pass the transitive rlibs with --extern
             to the commandline as opposed to -L.
     """
 
     if force_all_deps_direct:
-        args.add_all(
+        rustc_args.add_all(
             depset(
                 transitive = [
                     dep_info.direct_crates,
@@ -1203,13 +1206,33 @@ def add_crate_link_flags(args, dep_info, force_all_deps_direct = False):
         )
     else:
         # nb. Direct crates are linked via --extern regardless of their crate_type
-        args.add_all(dep_info.direct_crates, map_each = _crate_to_link_flag)
-    args.add_all(
-        dep_info.transitive_crates,
-        map_each = _get_crate_dirname,
-        uniquify = True,
-        format_each = "-Ldependency=%s",
-    )
+        rustc_args.add_all(dep_info.direct_crates, map_each = _crate_to_link_flag)
+
+    # Windows is known to have a small limit to the length the command args can have (32k characters).
+    # To prevent the arguments to rustc from overflowing this length, rather than adding each transitive dep as a single library
+    # search path flag, symlink all transitive deps into a single directory that we can pass as a single path flag.
+    if toolchain.os == "windows":
+        # This is the directory that will contain symlinks to all the transitive deps
+        deps_dirname = crate_info.output.basename + ".transitive_crates"
+
+        # Tell the process wrapper to symlink all the transitive deps into the dir
+        args.add("--symlink-dir", deps_dirname)
+        args.add_all(
+            dep_info.transitive_crates,
+            map_each = _get_crate_path,
+            uniquify = True,
+            before_each = "--symlink-file",
+        )
+
+        # And tell rustc that all the transitive deps are in this dir.
+        rustc_args.add("-Ldependency=" + deps_dirname)
+    else:
+        rustc_args.add_all(
+            dep_info.transitive_crates,
+            map_each = _get_crate_dirname,
+            uniquify = True,
+            format_each = "-Ldependency=%s",
+        )
 
 def _crate_to_link_flag(crate):
     """A helper macro used by `add_crate_link_flags` for adding crate link flags to a Arg object
@@ -1240,6 +1263,17 @@ def _get_crate_dirname(crate):
         str: The directory name of the the output File that will be produced.
     """
     return crate.output.dirname
+
+def _get_crate_path(crate):
+    """A helper macro used by `add_crate_link_flags` for getting the current crate's output path
+
+    Args:
+        crate (CrateInfo): A CrateInfo provider from the current rule
+
+    Returns:
+        str: The path to the crate output.
+    """
+    return crate.output.path
 
 def _portable_link_flags(lib, use_pic, ambiguous_libs):
     artifact = get_preferred_artifact(lib, use_pic)
